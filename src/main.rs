@@ -6,7 +6,7 @@ fn open_blkdev_by_path(path: &str) -> Result<libblkid_rs::BlkidDevno, Box<dyn st
 }
 
 fn find_and_open_blkdev_by_token(token: &str) -> Result<Option<libblkid_rs::BlkidDevno>, Box<dyn std::error::Error>> {
-    let mut cache = libblkid_rs::BlkidCache::get_cache(None)?;
+    let mut cache = libblkid_rs::BlkidCache::get_cache(Some(std::path::Path::new("/dev/null")))?;
     cache.probe_all()?;
     let dev = cache.get_devname(either::Either::Left(token))?;
     eprintln!("Dev: {}", dev);
