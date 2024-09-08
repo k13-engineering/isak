@@ -1,0 +1,9 @@
+[package]
+name = "isak"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+clap = "4.5.17"
+either = "1.13.0"
+libblkid-rs = "0.3.2"
