@@ -1,4 +1,4 @@
-use clap::ArgMatches;
+use clap::{value_parser, ArgMatches};
 
 fn open_blkdev_by_path(path: &str) -> Result<libblkid_rs::BlkidDevno, Box<dyn std::error::Error>> {
     let probe = libblkid_rs::BlkidProbe::new_from_filename(std::path::Path::new(&path))?;
@@ -14,6 +14,30 @@ fn find_and_open_blkdev_by_token(token: &str) -> Result<Option<libblkid_rs::Blki
 
     let blkdev = open_blkdev_by_path(dev.as_str())?;
     return Ok(Some(blkdev));
+}
+
+fn find_partition_by_number(parent: &libblkid_rs::BlkidDevno, number: i32) -> Result<libblkid_rs::BlkidDevno, Box<dyn std::error::Error>> {
+    let devname = parent.to_devname()?;
+    let mut probe = libblkid_rs::BlkidProbe::new_from_filename(std::path::Path::new(devname.as_str()))?;
+    probe.enable_partitions(true)?;
+    probe.enable_superblocks(true)?;
+    probe.do_safeprobe()?;
+
+    let mut partitions = probe.get_partitions()?;
+    let partition = partitions.get_partition_by_partno(number)?;
+
+    let maybe_part_uuid = partition.get_uuid()?;
+    let part_uuid = maybe_part_uuid.unwrap();
+
+    let mut buf = [b'!'; 40];
+    let part_uuid_str = part_uuid.hyphenated().encode_lower(&mut buf);
+
+    let token = String::from("PARTUUID=") + part_uuid_str;
+
+    let maybe_blkdev = find_and_open_blkdev_by_token(&token)?;
+    let blkdev = maybe_blkdev.unwrap();
+
+    return Ok(blkdev);
 }
 
 fn cli() -> clap::Command {
@@ -35,6 +59,10 @@ fn cli() -> clap::Command {
                 )
                 .arg(
                     clap::arg!(--device <DEVICE> "Device to search for")
+                )
+                .arg(
+                    clap::arg!(--partno <PART> "Partition to search for")
+                    .value_parser(value_parser!(i32))
                 )
             )
         )
@@ -86,6 +114,20 @@ fn blkdev_find(find_cmd: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> 
 
         let (_name, parent_blkdev) = blkdev.to_wholedisk()?;
         blkdev = parent_blkdev;
+    }
+
+    let partition_number = find_cmd.get_one::<i32>("partno");
+
+    match partition_number {
+        Some(p) => {
+            eprintln!("Partition number: {}", p);
+
+            let partition_blkdev = find_partition_by_number(&blkdev, *p)?;
+            blkdev = partition_blkdev;
+        },
+        _ => {
+            // eprintln!("Partition number not found");
+        }
     }
 
     println!("{}", blkdev.to_devname()?);
