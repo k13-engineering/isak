@@ -18,24 +18,15 @@ fn find_and_open_blkdev_by_token(token: &str) -> Result<Option<libblkid_rs::Blki
 
 fn find_partition_by_number(parent: &libblkid_rs::BlkidDevno, number: i32) -> Result<libblkid_rs::BlkidDevno, Box<dyn std::error::Error>> {
     let devname = parent.to_devname()?;
-    let mut probe = libblkid_rs::BlkidProbe::new_from_filename(std::path::Path::new(devname.as_str()))?;
-    probe.enable_partitions(true)?;
-    probe.enable_superblocks(true)?;
-    probe.do_safeprobe()?;
 
-    let mut partitions = probe.get_partitions()?;
-    let partition = partitions.get_partition_by_partno(number)?;
+    // if devname ends with a number, we need to add "p", e.g. mmcblk0p1 vs. sda1
+    let mut part_devname = devname.clone();
+    if devname.chars().last().unwrap().is_numeric() {
+        part_devname.push('p');
+    }
 
-    let maybe_part_uuid = partition.get_uuid()?;
-    let part_uuid = maybe_part_uuid.unwrap();
-
-    let mut buf = [b'!'; 40];
-    let part_uuid_str = part_uuid.hyphenated().encode_lower(&mut buf);
-
-    let token = String::from("PARTUUID=") + part_uuid_str;
-
-    let maybe_blkdev = find_and_open_blkdev_by_token(&token)?;
-    let blkdev = maybe_blkdev.unwrap();
+    part_devname.push_str(&number.to_string());
+    let blkdev = open_blkdev_by_path(part_devname.as_str())?;
 
     return Ok(blkdev);
 }
