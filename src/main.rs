@@ -31,6 +31,68 @@ fn find_partition_by_number(parent: &libblkid_rs::BlkidDevno, number: i32) -> Re
     return Ok(blkdev);
 }
 
+pub fn find_blkdev_name_by_serial_via_sysfs(
+    sysfs_mount: &str,
+    serial: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    // Construct the path to the /sys/block directory.
+    let block_devices_path = std::path::Path::new(sysfs_mount).join("block");
+
+    // Check if the /sys/block path exists and is a directory.
+    if !block_devices_path.is_dir() {
+        return Err(format!("'{}' is not a valid directory.", block_devices_path.display()).into());
+    }
+
+    // Iterate over each entry in the /sys/block directory.
+    for entry in std::fs::read_dir(block_devices_path)? {
+        let entry = entry?;
+        let dev_path = entry.path();
+
+        // We are only interested in directories (which represent block devices).
+        if dev_path.is_dir() {
+            // Construct the path to the potential 'serial' file for this device.
+            let serial_path = dev_path.join("serial");
+
+            // Check if the 'serial' file actually exists for this device.
+            // Not all block devices expose a serial number this way.
+            if serial_path.is_file() {
+                // Read the serial number from the file. The content might have trailing whitespace.
+                let file_serial = std::fs::read_to_string(&serial_path)?;
+
+                // Compare the trimmed serial from the file with the target serial.
+                if file_serial.trim() == serial {
+                    // If they match, get the directory name, which is the device name.
+                    if let Some(dev_name) = dev_path.file_name() {
+                        if let Some(dev_name_str) = dev_name.to_str() {
+                            // Found a match, return the device name.
+                            return Ok(Some(dev_name_str.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If the loop completes without finding a match, return None.
+    Ok(None)
+}
+
+fn find_and_open_blkdev_by_serial(serial: &str) -> Result<Option<libblkid_rs::BlkidDevno>, Box<dyn std::error::Error>> {
+    let maybe_devname = find_blkdev_name_by_serial_via_sysfs("/sys", serial)?;
+
+    match maybe_devname {
+        Some(devname) => {
+            eprintln!("Devname: {}", devname);
+            let blkdev = open_blkdev_by_path(format!("/dev/{}", devname).as_str())?;
+            return Ok(Some(blkdev));
+        }
+        None => {
+            eprintln!("Device with serial {} not found", serial);
+            return Ok(None);
+        }
+    }
+}
+
 fn cli() -> clap::Command {
     clap::Command::new("isak")
         .about("Initramfs Swiss Army Knife")
@@ -55,12 +117,27 @@ fn cli() -> clap::Command {
                     clap::arg!(--partno <PART> "Partition to search for")
                     .value_parser(value_parser!(i32))
                 )
+                .arg(
+                    clap::arg!(--serial <SERIAL> "serial number to search for")
+                )
             )
         )
 }
 
 fn blkdev_find(find_cmd: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let mut maybe_blkdev: Option<libblkid_rs::BlkidDevno> = None;
+
+    let serial = find_cmd.get_one::<String>("serial");
+
+    match serial {
+        Some(s) => {
+            eprintln!("Serial: {}", s);
+            maybe_blkdev = find_and_open_blkdev_by_serial(s.as_str())?;
+        }
+        _ => {
+            eprintln!("Serial not found");
+        }
+    }
 
     //let token = find_cmd.value_of("token").unwrap();
     let token = find_cmd.get_one::<String>("token");
